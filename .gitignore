@@ -1,0 +1,13 @@
+.env
+*.env
+settings.json
+browser-profile/
+__pycache__/
+*.py[cod]
+*.exe
+*.pdb
+*.log
+*.tmp
+.vs/
+bin/
+obj/

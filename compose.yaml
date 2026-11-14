@@ -1,0 +1,43 @@
+name: scut-easyconnect
+
+services:
+  easyconnect:
+    image: scut-easyconnect:7.6.7-local
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${EASYCONNECT_BASE_IMAGE:-hagb/docker-easyconnect@sha256:a279ff5e2c623a6ebd31b4a891a2625140ff46c539ec655199fc1cff55d44c12}
+    container_name: scut-easyconnect
+    platform: linux/amd64
+    restart: "no"
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    extra_hosts:
+      - "sslvpn3.scut.edu.cn:${SCUT_VPN_IP:-183.62.57.37}"
+    environment:
+      PASSWORD: ${VNC_PASSWORD:?Set VNC_PASSWORD in .env}
+      URLWIN: "1"
+      VNC_SIZE: "1280x800"
+      CLIP_TEXT: "https://sslvpn3.scut.edu.cn"
+    ports:
+      - "127.0.0.1:5901:5901"
+      - "127.0.0.1:1080:1080"
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:54530:54530"
+    volumes:
+      - easyconnect-data:/root
+      - easyconnect-logs:/usr/share/sangfor/EasyConnect/resources/logs
+    shm_size: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+volumes:
+  easyconnect-data:
+    name: scut-easyconnect-data
+  easyconnect-logs:
+    name: scut-easyconnect-logs

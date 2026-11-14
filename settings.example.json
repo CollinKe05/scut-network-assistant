@@ -1,0 +1,12 @@
+{
+  "ServerUser": "your-ssh-user",
+  "ServerAddress": "10.48.12.129",
+  "SshPort": 22,
+  "LocalProxyPort": 7897,
+  "RemoteProxyPort": 18888,
+  "PythonPath": "C:\\Users\\YOUR_NAME\\miniforge3\\python.exe",
+  "ClashPath": "C:\\Program Files\\Clash Verge\\clash-verge.exe",
+  "LoginWaitMinutes": 15,
+  "ClientMode": "Termius",
+  "TermiusPath": "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\Termius\\Termius.exe"
+}

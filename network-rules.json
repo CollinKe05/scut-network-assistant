@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "enabled": true,
+      "kind": "cidr",
+      "value": "10.48.0.0/16",
+      "route": "campus"
+    },
+    {
+      "enabled": true,
+      "kind": "cidr",
+      "value": "202.38.251.178/32",
+      "route": "campus"
+    },
+    {
+      "enabled": true,
+      "kind": "suffix",
+      "value": "scut.edu.cn",
+      "route": "campus"
+    }
+  ]
+}
