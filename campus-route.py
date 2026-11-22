@@ -12,8 +12,8 @@ import time
 
 ROOT = Path(os.environ['APPDATA']) / 'io.github.clash-verge-rev.clash-verge-rev'
 HERE = Path(__file__).resolve().parent
-GROUP = 'SCUT-EasyConnect'
-DOCKER = 'SCUT-EasyConnect-Docker'
+GROUP = 'Campus-Network'
+DOCKER = 'Campus-Docker'
 
 
 class PipeSocket:
@@ -48,56 +48,8 @@ def find_pipe():
 
 def install_selector(pipe_name):
     proxies = api(pipe_name, 'GET', '/proxies')['proxies']
-    if proxies.get(GROUP, {}).get('type') == 'Selector':
-        if set(proxies[GROUP].get('all', [])) != {'DIRECT', DOCKER}:
-            raise RuntimeError('SCUT selector differs from the managed configuration.')
-        return
-    if proxies.get(GROUP, {}).get('type', '').lower() != 'socks5':
-        raise RuntimeError('Existing SCUT SOCKS5 configuration was not found.')
-    script = ROOT / 'profiles/Script.js'
-    original_script = script.read_text(encoding='utf-8-sig')
-    if 'const campusName = "SCUT-EasyConnect";' not in original_script:
-        raise RuntimeError('Global script has changed; refusing to overwrite it.')
-    source = (ROOT / 'clash-verge.yaml').read_text(encoding='utf-8-sig')
-    source, n = re.subn(r'(?m)^- name: SCUT-EasyConnect\s*$', '- name: ' + DOCKER, source)
-    if n != 1 or re.search(r'(?m)^\s*- name: SCUT-EasyConnect-Docker\s*$', source) is None:
-        raise RuntimeError('Expected exactly one generated SCUT proxy.')
-    group_yaml = (f'proxy-groups:\n- name: {GROUP}\n  type: select\n'
-                  f'  proxies:\n  - DIRECT\n  - {DOCKER}\n')
-    source, n = re.subn(r'(?m)^proxy-groups:\s*\r?\n', lambda m: group_yaml, source)
-    if n != 1:
-        raise RuntimeError('Expected one generated proxy-groups section.')
-    active = api(pipe_name, 'GET', '/configs')
-    source = re.sub(r'(?m)^mode:.*$', 'mode: ' + active['mode'], source)
-    source = re.sub(r'(?m)^external-controller-pipe:.*$',
-                    lambda m: "external-controller-pipe: '\\\\.\\pipe\\" + pipe_name + "'", source)
-    runtime = ROOT / 'scut-campus-runtime.yaml'
-    previous_runtime = runtime.read_bytes() if runtime.exists() else None
-    runtime.write_text(source, encoding='utf-8')
-    core = Path(os.environ['ProgramFiles']) / 'Clash Verge/verge-mihomo.exe'
-    result = subprocess.run([str(core), '-t', '-d', str(ROOT), '-f', str(runtime)],
-                            capture_output=True, timeout=45, creationflags=0x08000000)
-    if result.returncode:
-        if previous_runtime is not None:
-            runtime.write_bytes(previous_runtime)
-        raise RuntimeError('Clash configuration validation failed; active configuration was unchanged.')
-    backup = ROOT / 'scut-backup'
-    backup.mkdir(exist_ok=True)
-    backup_file = backup / 'Script.before-campus-selector.js'
-    if not backup_file.exists():
-        backup_file.write_text(original_script, encoding='utf-8')
-    script.write_bytes((HERE / 'clash-scut.js').read_bytes())
-    try:
-        api(pipe_name, 'PUT', '/configs?force=true', {'payload': source})
-    except Exception:
-        script.write_text(original_script, encoding='utf-8')
-        raise
-    # Retain user choices in every pre-existing selector.
-    for name, proxy in proxies.items():
-        if name != GROUP and proxy.get('type') == 'Selector' and proxy.get('now'):
-            from urllib.parse import quote
-            api(pipe_name, 'PUT', '/proxies/' + quote(name, safe=''), {'name': proxy['now']})
-    print('SCUT_SELECTOR_INSTALLED', flush=True)
+    if proxies.get(GROUP, {}).get('type') != 'Selector' or set(proxies[GROUP].get('all', [])) != {'DIRECT', DOCKER}:
+        raise RuntimeError('请先完成首次配置向导：导入校园配置或安装全局扩展脚本，然后在 Clash 重新加载配置。')
 
 
 def probe_ssh(address, port):
@@ -138,7 +90,17 @@ def main():
         raise RuntimeError('Clash must use Rule mode for campus splitting.')
     if args.probe:
         settings = json.loads((HERE / 'settings.json').read_text(encoding='utf-8-sig'))
-        return 0 if probe_ssh(settings['ServerAddress'], settings['SshPort']) else 2
+        if settings.get('ServerAddress'):
+            return 0 if probe_ssh(settings['ServerAddress'], settings['SshPort']) else 2
+        import urllib.request
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(settings['ProbeUrl'], timeout=6) as response:
+                print('HTTP_PROBE_OK ' + str(response.status), flush=True)
+                return 0
+        except Exception:
+            print('HTTP_PROBE_FAILED', flush=True)
+            return 2
     return 0
 
 

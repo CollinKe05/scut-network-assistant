@@ -10,16 +10,29 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-[assembly: System.Reflection.AssemblyTitle("华工网络助手")]
-[assembly: System.Reflection.AssemblyProduct("华工网络助手")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyTitle("校园网络助手")]
+[assembly: System.Reflection.AssemblyProduct("校园网络助手")]
+[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
 
 namespace CampusNetwork {
     public class Settings {
-        public string PythonPath { get; set; }
-        public string TermiusPath { get; set; }
-        public string ServerAddress { get; set; }
-        public int SshPort { get; set; }
+        public bool SetupCompleted {get;set;}
+        public int SetupStep {get;set;}
+        public string VpnServerUrl {get;set;}
+        public string CampusDomain {get;set;}
+        public string ProbeUrl {get;set;}
+        public string ServerUser {get;set;}
+        public string ServerAddress {get;set;}
+        public int SshPort {get;set;}
+        public int LocalProxyPort {get;set;}
+        public int RemoteProxyPort {get;set;}
+        public int LoginWaitMinutes {get;set;}
+        public string ClientMode {get;set;}
+        public string PythonPath {get;set;}
+        public string DockerPath {get;set;}
+        public string ClashPath {get;set;}
+        public string VncViewerPath {get;set;}
+        public string TermiusPath {get;set;}
     }
     public class Rule {
         public bool enabled { get; set; }
@@ -41,20 +54,16 @@ namespace CampusNetwork {
             SetProcessDPIAware();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            string root = AppDomain.CurrentDomain.BaseDirectory;
-            if (!File.Exists(Path.Combine(root, "settings.json"))) {
-                MessageBox.Show("请从完整的程序文件夹运行华工网络助手。桌面可以放快捷方式。", "华工网络助手", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            var instance = new System.Threading.Mutex(false, "Local\\SCUT-NetworkAssistant");
+            string root = RuntimePack.Prepare(args);
+            var instance = new System.Threading.Mutex(false, "Local\\Campus-NetworkAssistant-Distribution");
             bool owns = args.Contains("--smoke-test") || instance.WaitOne(0);
             if (!owns) {
-                var existing=Process.GetProcessesByName("SCUT-Network").FirstOrDefault(p=>p.Id!=Process.GetCurrentProcess().Id && p.MainWindowHandle!=IntPtr.Zero);
+                var existing=Process.GetProcessesByName("Campus-Network").FirstOrDefault(p=>p.Id!=Process.GetCurrentProcess().Id && p.MainWindowHandle!=IntPtr.Zero);
                 if(existing!=null) {ShowWindow(existing.MainWindowHandle,9); SetForegroundWindow(existing.MainWindowHandle);}
                 instance.Dispose(); return;
             }
             try {
-                MainForm form = new MainForm(root, args.Contains("--smoke-test"));
+                MainForm form = new MainForm(root, args.Contains("--smoke-test"), args.Contains("--test-mode"));
                 if (args.Contains("--smoke-test")) {
                     form.Shown += async delegate {
                         await form.RefreshStatus();
@@ -64,14 +73,17 @@ namespace CampusNetwork {
                 }
                 Application.Run(form);
             } catch (Exception ex) {
-                MessageBox.Show("程序未能启动：" + ex.Message, "华工网络助手", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("程序未能启动：" + ex.Message, "校园网络助手", MessageBoxButtons.OK, MessageBoxIcon.Error);
             } finally {if(!args.Contains("--smoke-test")) instance.ReleaseMutex(); instance.Dispose();}
         }
     }
 
-    public class MainForm : Form {
+    public partial class MainForm : Form {
         readonly string root;
-        readonly Settings settings;
+        Settings settings;
+        readonly bool testMode;
+        TabPage setupPage;
+        Label sidebarDescription;
         readonly JavaScriptSerializer json = new JavaScriptSerializer();
         readonly Color accent = Color.FromArgb(0, 103, 192);
         readonly Color ink = Color.FromArgb(28, 33, 43);
@@ -92,11 +104,12 @@ namespace CampusNetwork {
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
 
-        public MainForm(string path, bool smokeTest) {
+        public MainForm(string path, bool smokeTest, bool test) {
             root = path;
-            settings = json.Deserialize<Settings>(File.ReadAllText(Path.Combine(root, "settings.json")));
-            if (!File.Exists(settings.PythonPath)) throw new Exception("找不到配置中的 Python，请检查 settings.json。");
-            Text = "华工网络助手";
+            testMode = test;
+            string configPath=Path.Combine(root,"settings.json");
+            settings = json.Deserialize<Settings>(File.ReadAllText(File.Exists(configPath)?configPath:Path.Combine(root,"settings.example.json")));
+            Text = "校园网络助手";
             Font = new Font("Microsoft YaHei UI", 9F);
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -108,6 +121,7 @@ namespace CampusNetwork {
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             BuildUi();
             LoadRules();
+            if(settings.SetupCompleted) tabs.SelectedIndex=1;
             Shown += async delegate { int round = 2; try { DwmSetWindowAttribute(Handle, 33, ref round, 4); } catch {} if(!smokeTest) await RefreshStatus(); };
             timer.Interval = 12000;
             timer.Tick += async delegate { if (!busy) await RefreshStatus(); };
@@ -130,8 +144,9 @@ namespace CampusNetwork {
 
         void BuildUi() {
             var side = new Panel { Dock = DockStyle.Left, Width = 210, BackColor = Color.FromArgb(238, 242, 249), Padding = new Padding(22, 28, 18, 20) };
-            var brand = TextLabel("华工\n网络助手", 14F, true); brand.Dock = DockStyle.Top; brand.Height = 106; brand.ForeColor = accent;
-            var description = TextLabel("校园连接 · 网络分流\n\nA800\n10.48.12.129\n\n本机代理\n127.0.0.1:7897", 8.5F, false); description.Dock = DockStyle.Top; description.Height = 210;
+            var brand = TextLabel("校园\n网络助手", 14F, true); brand.Dock = DockStyle.Top; brand.Height = 106; brand.ForeColor = accent;
+            sidebarDescription=TextLabel("首次配置 · 校园连接\n\n服务器信息由使用者填写\n默认只分流学校域名",8.5F,false);
+            var description=sidebarDescription; description.Dock=DockStyle.Top; description.Height=210;
             var foot = TextLabel("EasyConnect 运行在 Docker\n账号验证在 RealVNC 完成\n\n关闭本窗口保留网络连接", 8F, false); foot.Dock = DockStyle.Bottom; foot.Height = 160; foot.ForeColor = Color.DimGray;
             side.Controls.Add(description); side.Controls.Add(brand); side.Controls.Add(foot);
             var main = new Panel { Dock = DockStyle.Fill, Padding = new Padding(24, 20, 24, 20) };
@@ -139,7 +154,9 @@ namespace CampusNetwork {
             var sub = TextLabel("校内直连，校外连接校园 VPN；网段和域名按你的规则分流。", 10F, false); sub.Dock = DockStyle.Top; sub.Height = 40; sub.ForeColor = Color.DimGray;
             tabs.Dock = DockStyle.Fill; tabs.Font = Font; tabs.Padding = new Point(16, 9);
             TabPage home = Page("连接面板"), rules = Page("网段与域名"), logs = Page("运行记录");
-            tabs.TabPages.AddRange(new[] {home, rules, logs});
+            setupPage=Page("首次配置向导");
+            tabs.TabPages.AddRange(new[] {setupPage, home, rules, logs});
+            BuildWizard(setupPage);
             BuildHome(home); BuildRules(rules);
             log.Dock = DockStyle.Fill; log.ReadOnly = true; log.BackColor = Color.White; log.BorderStyle = BorderStyle.None;
             log.Font = new Font("Consolas", 9F); logs.Controls.Add(log);
@@ -163,10 +180,10 @@ namespace CampusNetwork {
             actions.Controls.Add(ActionButton("校内直连", false, async delegate { await Connect("-CampusOnly"); }, true));
             actions.Controls.Add(ActionButton("校外校园 VPN", false, async delegate { await Connect("-VpnOnly"); }, true));
             stack.Controls.Add(actions, 0, 2);
-            var info = TextLabel("自动模式会先验证 A800 的 SSH，能直连就跳过 Docker。\n“跟随快捷模式”的规则随这里切换；固定出口保持你的选择。\n换网络后重新点击连接；服务器代理请在 Termius 启动原有 Remote Rule。", 9F, false); info.Dock = DockStyle.Fill; info.ForeColor = Color.DimGray; stack.Controls.Add(info, 0, 3);
+            var info = TextLabel("自动模式先检查你填写的目标，能直连就跳过 Docker。\n“跟随快捷模式”的规则随这里切换；固定出口保持你的选择。\n换网络后重新点击连接；服务器与反向代理按向导填写自己的信息。", 9F, false); info.Dock = DockStyle.Fill; info.ForeColor = Color.DimGray; stack.Controls.Add(info, 0, 3);
             var tools = new FlowLayoutPanel { Dock = DockStyle.Fill };
             tools.Controls.Add(ActionButton("打开 Termius", false, delegate { OpenTermius(); }, false));
-            tools.Controls.Add(ActionButton("RealVNC 登录", false, delegate { OpenVnc(); }, false));
+            tools.Controls.Add(ActionButton("校园登录", false, delegate { OpenVnc(); }, false));
             tools.Controls.Add(ActionButton("停止校园 VPN", false, async delegate { await StopVpn(); }, true));
             tools.Controls.Add(ActionButton("刷新状态", false, async delegate { await RefreshStatus(); }, true));
             tools.Controls.Add(ActionButton("VNC 连接密码", false, delegate { ShowPassword(); }, false));
@@ -282,13 +299,19 @@ namespace CampusNetwork {
             await RefreshStatus();
         }
         async Task Connect(string flag) {
+            if(!settings.SetupCompleted && wizardStep<4) {tabs.SelectedIndex=0; MessageBox.Show(this,"请先按向导安装依赖并保存连接信息。"); return;}
+            if(testMode) {AppendLog("测试模式：未执行网络操作。"); return;}
+            if(MessageBox.Show(this,"将按所选模式切换校园网络路径，并可能启动 Docker VPN。现有 SSH 或代理连接可能中断。确认现在连接？", "确认网络操作",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes) return;
             if (dirty && MessageBox.Show(this,"规则有未保存修改。继续连接会使用上次保存的规则。", "继续连接",MessageBoxButtons.OKCancel,MessageBoxIcon.Information)!=DialogResult.OK) return;
             await Operation("正在连接，请查看运行记录；需要认证时会打开 RealVNC。", async delegate {
-                Result r=await Run("powershell.exe",PowershellArgs("Launch-SCUT.ps1",flag+" -NoPause"),true);
+                Result r=await Run("powershell.exe",PowershellArgs("Launch-SCUT.ps1",flag+" -NoPause -NetworkChangeConfirmed"),true);
                 if(r.Exit!=0 && !cancelled) throw new Exception("连接流程未完成，请查看运行记录。");
             });
         }
         async Task ApplyRules() {
+            if(!settings.SetupCompleted) {MessageBox.Show(this,"请先完成首次配置向导。");return;}
+            if(testMode) return;
+            if(MessageBox.Show(this,"保存将重新加载 Clash 分流规则，现有连接可能受影响。确认现在应用？",Text,MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes) return;
             RuleFile rules=ReadGrid();
             string temp=Path.Combine(Path.GetTempPath(),"scut-rules-"+Guid.NewGuid().ToString("N")+".json");
             await Operation("正在校验并应用网段与域名规则…",async delegate {
@@ -303,17 +326,22 @@ namespace CampusNetwork {
             },false);
         }
         async Task StopVpn() {
+            if(testMode) return;
+            if(MessageBox.Show(this,"停止校园 VPN 并切回直连会断开通过 VPN 建立的 SSH / 代理连接。确定现在停止？",Text,MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes) return;
             await Operation("正在停止校园 VPN，校园路径将切回直连…",async delegate {
                 Result route=await Run(settings.PythonPath,Q(Path.Combine(root,"campus-route.py"))+" direct",true);
                 if(route.Exit!=0 && !cancelled) throw new Exception("直连切换失败，请先检查 Clash。");
                 if(cancelled) return;
-                string docker=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs\\DockerDesktop\\resources\\bin\\docker.exe");
-                Result r=await Run(File.Exists(docker)?docker:"docker.exe","--context desktop-linux stop --time 10 scut-easyconnect",true);
+                string docker=settings.DockerPath;
+                Result r=await Run(File.Exists(docker)?docker:"docker.exe","--context desktop-linux stop --time 10 campus-easyconnect",true);
                 if(r.Exit!=0 && !cancelled) throw new Exception("容器停止命令未完成；若 Docker 已关闭，无需重复停止。");
             });
         }
         public async Task RefreshStatus() {
             if(busy || IsDisposed) return;
+            if(testMode || string.IsNullOrEmpty(settings.PythonPath) || !File.Exists(settings.PythonPath)) {
+                routeValue.Text=settings.SetupCompleted?"待连接":"请先完成向导";clashValue.Text="待检测";vpnValue.Text="待检测";return;
+            }
             // Serialize status probes with button actions so cancellation always targets the active task.
             busy=true;
             try {
@@ -322,7 +350,7 @@ namespace CampusNetwork {
                 var state=json.Deserialize<Dictionary<string,object>>(r.Output); lastState=r.Output;
                 bool online=state.ContainsKey("clash") && (bool)state["clash"];
                 string selected=state.ContainsKey("selected")?Convert.ToString(state["selected"]):"";
-                routeValue.Text=selected=="DIRECT"?"校园直连":selected=="SCUT-EasyConnect-Docker"?"Docker VPN":"未就绪";
+                routeValue.Text=selected=="DIRECT"?"校园直连":selected=="Campus-Docker"?"Docker VPN":"未就绪";
                 clashValue.Text=online?((bool)state["tun"]?"TUN 已开启":"TUN 未开启"):"未连接";
                 if(online && Convert.ToString(state["mode"])!="rule") clashValue.Text="请切规则模式";
                 vpnValue.Text=(bool)state["vpn_port"]?"本机端口可用":"未就绪 / 已关闭";
@@ -332,12 +360,12 @@ namespace CampusNetwork {
         void OpenTermius() {TryOpen(delegate {Process.Start(new ProcessStartInfo(settings.TermiusPath) {UseShellExecute=true});});}
         void OpenVnc() {
             TryOpen(delegate {
-                string[] paths={@"D:\Program Files\RealVNC\VNC Viewer\vncviewer.exe",@"C:\Program Files\RealVNC\VNC Viewer\vncviewer.exe",@"C:\Program Files (x86)\RealVNC\VNC Viewer\vncviewer.exe"};
-                string viewer=paths.FirstOrDefault(File.Exists);
-                if(viewer==null) throw new Exception("未找到 RealVNC Viewer，请先安装或手动打开。");
-                Process.Start(new ProcessStartInfo(viewer,"127.0.0.1:5901") {UseShellExecute=true});
+                if(!string.IsNullOrEmpty(settings.VncViewerPath) && File.Exists(settings.VncViewerPath))
+                    Process.Start(new ProcessStartInfo(settings.VncViewerPath,"127.0.0.1:5901") {UseShellExecute=true});
+                else Process.Start(new ProcessStartInfo("http://127.0.0.1:6080/") {UseShellExecute=true});
             });
         }
+
         void ShowPassword() {
             TryOpen(delegate {
                 if(passwordLabel.Tag!=null) {passwordLabel.Tag=null; passwordLabel.Text="RealVNC 地址 127.0.0.1:5901\n校园账号与验证码请在 RealVNC 内填写。";return;}
@@ -352,6 +380,6 @@ namespace CampusNetwork {
             if(dirty && MessageBox.Show(this,"还有未保存的规则，确定关闭吗？",Text,MessageBoxButtons.OKCancel,MessageBoxIcon.Question)!=DialogResult.OK) {e.Cancel=true;return;}
             timer.Stop();
         }
-        public void SaveSmokeReport(string path) {File.WriteAllText(path,json.Serialize(new {created=true,rows=grid.Rows.Count,status=lastState,route=routeValue.Text}),new UTF8Encoding(false));}
+        public void SaveSmokeReport(string path) {File.WriteAllText(path,json.Serialize(new {created=true,rows=grid.Rows.Count,status=lastState,route=routeValue.Text,setupTab=tabs.TabPages[0].Text,dataRoot=root,firstRun=!settings.SetupCompleted,server=settings.ServerAddress}),new UTF8Encoding(false));}
     }
 }

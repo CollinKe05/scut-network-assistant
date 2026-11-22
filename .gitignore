@@ -11,3 +11,5 @@ __pycache__/
 .vs/
 bin/
 obj/
+
+app/payload.zip

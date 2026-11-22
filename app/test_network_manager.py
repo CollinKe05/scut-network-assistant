@@ -15,12 +15,12 @@ class RulesTest(unittest.TestCase):
     def test_url_domain_and_ip_normalization(self):
         self.assertEqual(self.normalize('domain', 'https://WWW.Example.COM:443/watch?v=1')['rules'][0]['value'], 'www.example.com')
         self.assertEqual(self.normalize('suffix', '*.example.com')['rules'][0]['value'], 'example.com')
-        self.assertEqual(self.normalize('cidr', '10.48.12.129/16')['rules'][0]['value'], '10.48.0.0/16')
-        self.assertEqual(self.normalize('cidr', '10.48.12.129')['rules'][0]['value'], '10.48.12.129/32')
+        self.assertEqual(self.normalize('cidr', '192.0.2.10/24')['rules'][0]['value'], '192.0.2.0/24')
+        self.assertEqual(self.normalize('cidr', '192.0.2.10')['rules'][0]['value'], '192.0.2.10/32')
 
     def test_bad_rules_are_rejected_before_writing(self):
         for kind, value in [('cidr', '300.1.1.1'), ('cidr', '::/0'), ('domain', 'bad_domain.com'),
-                            ('domain', 'example.com,DIRECT'), ('domain', '10.48.12.129'), ('domain', '')]:
+                            ('domain', 'example.com,DIRECT'), ('domain', '192.0.2.10'), ('domain', '')]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.normalize(kind, value)
         a = self.normalize('domain', 'example.com')
@@ -31,7 +31,7 @@ class RulesTest(unittest.TestCase):
         source = '''mode: rule
 external-controller-pipe: old
 proxies:
-- name: SCUT-EasyConnect-Docker
+- name: Campus-Docker
   type: socks5
   server: 127.0.0.1
   port: 1080
@@ -40,30 +40,30 @@ proxies:
   server: 192.0.2.1
   port: 9000
 proxy-groups:
-- name: SCUT-EasyConnect
+- name: Campus-Network
   type: select
   proxies:
   - DIRECT
-  - SCUT-EasyConnect-Docker
+  - Campus-Docker
 - name: OriginalGroup
   type: select
   proxies:
   - OriginalNode
 rules:
 - DOMAIN,sslvpn3.scut.edu.cn,DIRECT
-- IP-CIDR,10.48.0.0/16,SCUT-EasyConnect,no-resolve
+- IP-CIDR,192.0.2.0/24,Campus-Network,no-resolve
 - DOMAIN,example.com,OriginalGroup
 - MATCH,OriginalGroup
 profile:
   store-selected: true
 '''
-        old = self.normalize('cidr', '10.48.0.0/16')
+        old = self.normalize('cidr', '192.0.2.0/24')
         new = self.normalize('domain', 'https://example.com/path', 'direct')
         updated = manager.transform_source(source, old, new, 'test-pipe', {'mode': 'rule'})
         self.assertIn('- DOMAIN,example.com,DIRECT', updated)
         self.assertIn('- DOMAIN,example.com,OriginalGroup', updated)
         self.assertIn('- MATCH,OriginalGroup\nprofile:\n  store-selected: true', updated)
-        self.assertNotIn('IP-CIDR,10.48.0.0/16,SCUT-EasyConnect', updated)
+        self.assertNotIn('IP-CIDR,192.0.2.0/24,Campus-Network', updated)
         for key in ['proxies:', 'proxy-groups:']:
             original = source.split(key, 1)[1].split('rules:', 1)[0]
             changed = updated.split(key, 1)[1].split('rules:', 1)[0]
