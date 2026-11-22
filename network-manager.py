@@ -31,7 +31,7 @@ def gateway_rules():
     result = ['DOMAIN,' + host + ',DIRECT']
     env = HERE / '.env'
     if env.exists():
-        match = re.search(r'(?m)^VPN_ENDPOINT_IP=(\S+)', env.read_text())
+        match = re.search(r'(?m)^VPN_ENDPOINT_IP=(\S+)', env.read_text(encoding='utf-8-sig'))
         if match:
             try: result.append('IP-CIDR,' + str(ipaddress.IPv4Address(match[1])) + '/32,DIRECT,no-resolve')
             except ValueError: pass
